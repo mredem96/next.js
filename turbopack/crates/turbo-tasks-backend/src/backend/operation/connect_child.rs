@@ -115,6 +115,7 @@ impl ConnectChildOperation {
                 }
             }
             if should_schedule {
+                let _span = tracing::trace_span!("schedule from connect child").entered();
                 ctx.schedule(child_task_id);
             }
 
