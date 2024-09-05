@@ -73,6 +73,8 @@ pub fn make_task_dirty(
 
     let mut task = ctx.task(task_id, TaskDataCategory::All);
 
+    println!("make_task_dirty {:?}", task_id);
+
     if task.add(CachedDataItem::Dirty { value: () }) {
         let dirty_container = get!(task, AggregatedDirtyContainerCount)
             .copied()
@@ -90,5 +92,7 @@ pub fn make_task_dirty(
                 ctx.schedule(task_id);
             }
         }
+    } else {
+        println!("already dirty");
     }
 }

@@ -146,6 +146,7 @@ impl AggregatedDataUpdate {
         let Self {
             dirty_container_update,
         } = self;
+        println!("apply {:?} {dirty_tasks_update:?}", task.id());
         let mut result = Self::default();
         if let Some((dirty_container_id, count)) = dirty_container_update {
             let mut added = false;
@@ -257,6 +258,7 @@ impl AggregationUpdateQueue {
 
     pub fn process(&mut self, ctx: &mut ExecuteContext<'_>) -> bool {
         if let Some(job) = self.jobs.pop_front() {
+            println!("process {:?}", job);
             match job {
                 AggregationUpdateJob::UpdateAggregationNumber {
                     task_id,
@@ -379,7 +381,12 @@ impl AggregationUpdateQueue {
             }
         }
 
-        self.jobs.is_empty()
+        if self.jobs.is_empty() {
+            println!("done");
+            true
+        } else {
+            false
+        }
     }
 
     fn balance_edge(&mut self, ctx: &mut ExecuteContext, upper_id: TaskId, task_id: TaskId) {
