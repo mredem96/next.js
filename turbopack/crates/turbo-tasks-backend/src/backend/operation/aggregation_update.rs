@@ -228,12 +228,14 @@ impl AggregatedDataUpdate {
 #[derive(Default, Serialize, Deserialize, Clone)]
 pub struct AggregationUpdateQueue {
     jobs: VecDeque<AggregationUpdateJob>,
+    pub processed_jobs: usize,
 }
 
 impl AggregationUpdateQueue {
     pub fn new() -> Self {
         Self {
             jobs: VecDeque::with_capacity(8),
+            processed_jobs: 0,
         }
     }
 
@@ -256,6 +258,7 @@ impl AggregationUpdateQueue {
     }
 
     pub fn process(&mut self, ctx: &mut ExecuteContext<'_>) -> bool {
+        self.processed_jobs += 1;
         if let Some(job) = self.jobs.pop_front() {
             match job {
                 AggregationUpdateJob::UpdateAggregationNumber {
