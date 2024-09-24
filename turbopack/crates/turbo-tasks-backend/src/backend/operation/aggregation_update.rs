@@ -146,7 +146,6 @@ impl AggregatedDataUpdate {
         let Self {
             dirty_container_update,
         } = self;
-        println!("apply {:?} {dirty_container_update:?}", task.id());
         let mut result = Self::default();
         if let Some((dirty_container_id, count)) = dirty_container_update {
             let mut added = false;
@@ -192,19 +191,11 @@ impl AggregatedDataUpdate {
                 }
                 (new != 0).then_some(new)
             });
-            println!(
-                "apply {task_id:?} {dirty_container_update:?} added={added:?} removed={removed:?} \
-                 count_update={count_update} => {:?}",
-                result.dirty_container_update
-            );
             if let Some((_, count)) = result.dirty_container_update.as_ref() {
                 if let Some(root_state) = get!(task, AggregateRoot) {
                     if *count < 0 {
                         root_state.all_clean_event.notify(usize::MAX);
                         if matches!(root_state.ty, ActiveType::CachedActiveUntilClean) {
-                            println!(
-                                "apply {task_id:?} {dirty_container_update:?} removed RootState"
-                            );
                             task.remove(&CachedDataItemKey::AggregateRoot {});
                         }
                     }
@@ -264,7 +255,6 @@ impl AggregationUpdateQueue {
     }
 
     pub fn push(&mut self, job: AggregationUpdateJob) {
-        println!("push {:?}", job);
         self.jobs.push_back(job);
     }
 
@@ -281,7 +271,6 @@ impl AggregationUpdateQueue {
     pub fn process(&mut self, ctx: &mut ExecuteContext<'_>) -> bool {
         self.stats.processed_jobs += 1;
         if let Some(job) = self.jobs.pop_front() {
-            println!("process {:?}", job);
             match job {
                 AggregationUpdateJob::UpdateAggregationNumber {
                     task_id,
@@ -404,12 +393,7 @@ impl AggregationUpdateQueue {
             }
         }
 
-        if self.jobs.is_empty() {
-            println!("done");
-            true
-        } else {
-            false
-        }
+        self.jobs.is_empty()
     }
 
     fn balance_edge(&mut self, ctx: &mut ExecuteContext, upper_id: TaskId, task_id: TaskId) {
