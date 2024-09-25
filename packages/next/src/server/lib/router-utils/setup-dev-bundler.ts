@@ -1,10 +1,7 @@
 import type { NextConfigComplete } from '../../config-shared'
 import type { FilesystemDynamicRoute } from './filesystem'
 import type { UnwrapPromise } from '../../../lib/coalesced-function'
-import {
-  getPageStaticInfo,
-  type MiddlewareMatcher,
-} from '../../../build/analysis/get-page-static-info'
+import { getPageStaticInfo } from '../../../build/analysis/get-page-static-info'
 import type { MiddlewareRouteMatch } from '../../../shared/lib/router/utils/middleware-route-matcher'
 import type { PropagateToWorkersField } from './types'
 import type { NextJsHotReloaderInterface } from '../../dev/hot-reloader-types'
@@ -90,6 +87,7 @@ import { normalizeMetadataPageToRoute } from '../../../lib/metadata/get-metadata
 import { createEnvDefinitions } from '../experimental/create-env-definitions'
 import { JsConfigPathsPlugin } from '../../../build/webpack/plugins/jsconfig-paths-plugin'
 import { store as consoleStore } from '../../../build/output/store'
+import type { MiddlewareMatcher } from '../../../build/analysis/get-page-static-info'
 
 export type SetupOpts = {
   renderServer: LazyRenderServerInstance

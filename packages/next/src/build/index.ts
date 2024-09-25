@@ -131,7 +131,7 @@ import {
   // getSupportedBrowsers,
 } from './utils'
 import type { PageInfo, PageInfos, PrerenderedRoute } from './utils'
-import type { AppSegmentConfig } from './app-segments/app-segment-config'
+import type { AppSegmentConfig } from './segment-config/app/app-segment-config'
 import { writeBuildId } from './write-build-id'
 import { normalizeLocalePath } from '../shared/lib/i18n/normalize-locale-path'
 import isError from '../lib/is-error'
@@ -462,7 +462,12 @@ async function writeClientSsgManifest(
 
 interface FunctionsConfigManifest {
   version: number
-  functions: Record<string, Record<string, string | number>>
+  functions: Record<
+    string,
+    {
+      maxDuration?: number | undefined
+    }
+  >
 }
 
 async function writeFunctionsConfigManifest(
@@ -2074,9 +2079,10 @@ export default async function build(
                     })
                   : undefined
 
-                if (staticInfo?.extraConfig) {
-                  functionsConfigManifest.functions[page] =
-                    staticInfo.extraConfig
+                if (typeof staticInfo?.config?.maxDuration !== 'undefined') {
+                  functionsConfigManifest.functions[page] = {
+                    maxDuration: staticInfo?.config?.maxDuration,
+                  }
                 }
 
                 const pageRuntime = middlewareManifest.functions[

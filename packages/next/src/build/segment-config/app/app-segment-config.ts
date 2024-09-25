@@ -3,7 +3,7 @@ import { z } from 'next/dist/compiled/zod'
 /**
  * The schema for configuration for a page.
  *
- * @internal
+ * @internal - required to exclude zod types from the build
  */
 export const AppSegmentConfigSchema = z.object({
   /**
@@ -120,6 +120,6 @@ export type AppSegmentConfig = {
 /**
  * The keys of the configuration for a page.
  *
- * @internal
+ * @internal - required to exclude zod types from the build
  */
 export const AppSegmentConfigSchemaKeys = AppSegmentConfigSchema.keyof().options

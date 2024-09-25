@@ -5,7 +5,6 @@ import type { EdgeAppRouteLoaderQuery } from './webpack/loaders/next-edge-app-ro
 import type { NextConfigComplete } from '../server/config-shared'
 import type { webpack } from 'next/dist/compiled/webpack/webpack'
 import type {
-  MiddlewareConfigParsed,
   MiddlewareConfig,
   MiddlewareMatcher,
   PageStaticInfo,
@@ -46,8 +45,12 @@ import {
   isMiddlewareFilename,
   isInstrumentationHookFile,
   isInstrumentationHookFilename,
+  reduceAppConfig,
 } from './utils'
-import { getPageStaticInfo } from './analysis/get-page-static-info'
+import {
+  getAppPageStaticInfo,
+  getPageStaticInfo,
+} from './analysis/get-page-static-info'
 import { normalizePathSep } from '../shared/lib/page-path/normalize-path-sep'
 import { normalizePagePath } from '../shared/lib/page-path/normalize-page-path'
 import type { ServerRuntime } from '../types'
@@ -100,7 +103,7 @@ export async function getStaticInfoIncludingLayouts({
   pageExtensions,
   pageFilePath,
   appDir,
-  config,
+  config: nextConfig,
   isDev,
   page,
 }: {
@@ -112,23 +115,22 @@ export async function getStaticInfoIncludingLayouts({
   isDev: boolean | undefined
   page: string
 }): Promise<PageStaticInfo> {
+  // TODO: sync types for pages: PAGE_TYPES, ROUTER_TYPE, 'app' | 'pages', etc.
+  const pageType = isInsideAppDir ? PAGE_TYPES.APP : PAGE_TYPES.PAGES
+
   const pageStaticInfo = await getPageStaticInfo({
-    nextConfig: config,
+    nextConfig,
     pageFilePath,
     isDev,
     page,
-    // TODO: sync types for pages: PAGE_TYPES, ROUTER_TYPE, 'app' | 'pages', etc.
-    pageType: isInsideAppDir ? PAGE_TYPES.APP : PAGE_TYPES.PAGES,
+    pageType,
   })
 
-  if (!isInsideAppDir || !appDir) {
+  if (pageStaticInfo.type === PAGE_TYPES.PAGES || !appDir) {
     return pageStaticInfo
   }
 
-  const staticInfo: PageStaticInfo = {
-    // TODO-APP: Remove the rsc key altogether. It's no longer required.
-    rsc: 'server',
-  }
+  const segments = [pageStaticInfo]
 
   // inherit from layout files only if it's a page route
   if (isAppPageRoute(page)) {
@@ -149,44 +151,26 @@ export async function getStaticInfoIncludingLayouts({
     }
 
     for (const layoutFile of layoutFiles) {
-      const layoutStaticInfo = await getPageStaticInfo({
-        nextConfig: config,
+      const layoutStaticInfo = await getAppPageStaticInfo({
+        nextConfig,
         pageFilePath: layoutFile,
         isDev,
         page,
         pageType: isInsideAppDir ? PAGE_TYPES.APP : PAGE_TYPES.PAGES,
       })
 
-      // Only runtime is relevant here.
-      if (layoutStaticInfo.runtime) {
-        staticInfo.runtime = layoutStaticInfo.runtime
-      }
-      if (layoutStaticInfo.preferredRegion) {
-        staticInfo.preferredRegion = layoutStaticInfo.preferredRegion
-      }
-      if (layoutStaticInfo.extraConfig) {
-        staticInfo.extraConfig = {
-          ...staticInfo.extraConfig,
-          ...layoutStaticInfo.extraConfig,
-        }
-      }
+      segments.unshift(layoutStaticInfo)
     }
   }
 
-  if (pageStaticInfo.runtime) {
-    staticInfo.runtime = pageStaticInfo.runtime
-  }
-  if (pageStaticInfo.preferredRegion) {
-    staticInfo.preferredRegion = pageStaticInfo.preferredRegion
-  }
-  if (pageStaticInfo.extraConfig) {
-    staticInfo.extraConfig = {
-      ...staticInfo.extraConfig,
-      ...pageStaticInfo.extraConfig,
-    }
-  }
+  const config = reduceAppConfig(segments)
 
-  return staticInfo
+  return {
+    ...pageStaticInfo,
+    config,
+    runtime: config.runtime,
+    preferredRegion: config.preferredRegion,
+  }
 }
 
 type ObjectValue<T> = T extends { [key: string]: infer V } ? V : never
@@ -371,7 +355,7 @@ export function getEdgeServerEntry(opts: {
   isServerComponent: boolean
   page: string
   pages: MappedPages
-  middleware?: Partial<MiddlewareConfigParsed>
+  middleware?: Partial<MiddlewareConfig>
   pagesType: PAGE_TYPES
   appDirLoader?: string
   hasInstrumentationHook?: boolean

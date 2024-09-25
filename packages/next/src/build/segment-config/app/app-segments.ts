@@ -1,26 +1,27 @@
-import type { LoadComponentsReturnType } from '../../server/load-components'
-import type { Params } from '../../server/request/params'
+import type { LoadComponentsReturnType } from '../../../server/load-components'
+import type { Params } from '../../../server/request/params'
 import type {
   AppPageRouteModule,
   AppPageModule,
-} from '../../server/route-modules/app-page/module.compiled'
+} from '../../../server/route-modules/app-page/module.compiled'
 import type {
   AppRouteRouteModule,
   AppRouteModule,
-} from '../../server/route-modules/app-route/module.compiled'
+} from '../../../server/route-modules/app-route/module.compiled'
 import {
   type AppSegmentConfig,
   AppSegmentConfigSchema,
 } from './app-segment-config'
 
-import { InvariantError } from '../../shared/lib/invariant-error'
+import { InvariantError } from '../../../shared/lib/invariant-error'
 import {
   isAppRouteRouteModule,
   isAppPageRouteModule,
-} from '../../server/route-modules/checks'
-import { isClientReference } from '../../lib/client-reference'
-import { getSegmentParam } from '../../server/app-render/get-segment-param'
-import { getLayoutOrPageModule } from '../../server/lib/app-dir-module'
+} from '../../../server/route-modules/checks'
+import { isClientReference } from '../../../lib/client-reference'
+import { getSegmentParam } from '../../../server/app-render/get-segment-param'
+import { getLayoutOrPageModule } from '../../../server/lib/app-dir-module'
+import { normalizeZodErrors } from '../../../shared/lib/zod'
 
 type GenerateStaticParams = (options: { params?: Params }) => Promise<Params[]>
 
@@ -33,10 +34,20 @@ function attach(segment: AppSegment, userland: unknown) {
     return
   }
 
-  // Try to parse the application configuration. If there were any keys, attach
-  // it to the segment.
+  // Try to parse the application configuration.
   const config = AppSegmentConfigSchema.safeParse(userland)
-  if (config.success && Object.keys(config.data).length > 0) {
+  if (!config.success) {
+    const messages = [
+      `Invalid segment configuration options detected for "${segment.filePath}": `,
+    ]
+    for (const { message } of normalizeZodErrors(config.error)) {
+      messages.push(`    ${message}`)
+    }
+    throw new Error(messages.join('\n'))
+  }
+
+  // If there was any keys on the config, then attach it to the segment.
+  if (Object.keys(config.data).length > 0) {
     segment.config = config.data
   }
 
