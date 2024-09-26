@@ -18,6 +18,7 @@ use super::{
 };
 use crate::{
     backend::{OperationGuard, TransientTask},
+    backing_storage::ReadTransaction,
     data::{
         CachedDataItem, CachedDataItemIndex, CachedDataItemKey, CachedDataItemValue,
         CachedDataUpdate,
@@ -31,7 +32,7 @@ pub trait Operation:
     + TryFrom<AnyOperation, Error = ()>
     + Into<AnyOperation>
 {
-    fn execute(self, ctx: &ExecuteContext<'_>);
+    fn execute(self, ctx: &mut ExecuteContext<'_>);
 }
 
 pub struct ExecuteContext<'a> {
@@ -40,6 +41,22 @@ pub struct ExecuteContext<'a> {
     #[allow(dead_code)]
     operation_guard: Option<OperationGuard<'a>>,
     parent: Option<(&'a AnyOperation, &'a ExecuteContext<'a>)>,
+    transaction: Option<Option<ReadTransaction>>,
+}
+
+impl<'a> Drop for ExecuteContext<'a> {
+    fn drop(&mut self) {
+        if self.parent.is_none() {
+            if let Some(Some(transaction)) = self.transaction {
+                // Safety: `transaction` is a valid transaction from `self.backend.backing_storage`.
+                unsafe {
+                    self.backend
+                        .backing_storage
+                        .end_read_transaction(transaction)
+                };
+            }
+        }
+    }
 }
 
 impl<'a> ExecuteContext<'a> {
@@ -52,10 +69,35 @@ impl<'a> ExecuteContext<'a> {
             turbo_tasks,
             operation_guard: Some(backend.start_operation()),
             parent: None,
+            transaction: None,
         }
     }
 
-    pub fn task(&self, task_id: TaskId, category: TaskDataCategory) -> TaskGuard<'a> {
+    pub(super) unsafe fn new_with_tx(
+        backend: &'a TurboTasksBackendInner,
+        transaction: Option<ReadTransaction>,
+        turbo_tasks: &'a dyn TurboTasksBackendApi<TurboTasksBackend>,
+    ) -> Self {
+        Self {
+            backend,
+            turbo_tasks,
+            operation_guard: Some(backend.start_operation()),
+            parent: None,
+            transaction: Some(transaction),
+        }
+    }
+
+    fn transaction(&mut self) -> Option<ReadTransaction> {
+        if let Some(tx) = self.transaction {
+            tx
+        } else {
+            let tx = self.backend.backing_storage.start_read_transaction();
+            self.transaction = Some(tx);
+            tx
+        }
+    }
+
+    pub fn task(&mut self, task_id: TaskId, category: TaskDataCategory) -> TaskGuard<'a> {
         let mut task = self.backend.storage.access_mut(task_id);
         if !task.persistance_state().is_restored(category) {
             if task_id.is_transient() {
@@ -66,7 +108,7 @@ impl<'a> ExecuteContext<'a> {
                     // Avoid holding the lock too long since this can also affect other tasks
                     drop(task);
 
-                    let items = self.backend.backing_storage.lookup_data(task_id, category);
+                    let items = self.restore_task_data(task_id, category);
                     task = self.backend.storage.access_mut(task_id);
                     if !task.persistance_state().is_restored(category) {
                         for item in items {
@@ -84,6 +126,20 @@ impl<'a> ExecuteContext<'a> {
         }
     }
 
+    fn restore_task_data(
+        &mut self,
+        task_id: TaskId,
+        category: TaskDataCategory,
+    ) -> Vec<CachedDataItem> {
+        // Safety: `transaction` is a valid transaction from `self.backend.backing_storage`.
+        let items = unsafe {
+            self.backend
+                .backing_storage
+                .lookup_data(self.transaction(), task_id, category)
+        };
+        items
+    }
+
     pub fn is_once_task(&self, task_id: TaskId) -> bool {
         if !task_id.is_transient() {
             return false;
@@ -96,7 +152,7 @@ impl<'a> ExecuteContext<'a> {
     }
 
     pub fn task_pair(
-        &self,
+        &mut self,
         task_id1: TaskId,
         task_id2: TaskId,
         category: TaskDataCategory,
@@ -110,10 +166,8 @@ impl<'a> ExecuteContext<'a> {
                 drop(task1);
                 drop(task2);
 
-                let items1 = (!is_restored1)
-                    .then(|| self.backend.backing_storage.lookup_data(task_id1, category));
-                let items2 = (!is_restored2)
-                    .then(|| self.backend.backing_storage.lookup_data(task_id2, category));
+                let items1 = (!is_restored1).then(|| self.restore_task_data(task_id1, category));
+                let items2 = (!is_restored2).then(|| self.restore_task_data(task_id2, category));
 
                 let (t1, t2) = self.backend.storage.access_pair_mut(task_id1, task_id2);
                 task1 = t1;
@@ -183,6 +237,7 @@ impl<'a> ExecuteContext<'a> {
             turbo_tasks: self.turbo_tasks,
             operation_guard: None,
             parent: Some((&parent_op, self)),
+            transaction: self.transaction,
         };
         run(inner_ctx);
         *parent_op_ref = parent_op.try_into().unwrap();
@@ -453,7 +508,7 @@ pub enum AnyOperation {
 }
 
 impl AnyOperation {
-    pub fn execute(self, ctx: &ExecuteContext<'_>) {
+    pub fn execute(self, ctx: &mut ExecuteContext<'_>) {
         match self {
             AnyOperation::ConnectChild(op) => op.execute(ctx),
             AnyOperation::Invalidate(op) => op.execute(ctx),

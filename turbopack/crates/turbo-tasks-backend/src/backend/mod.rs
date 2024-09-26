@@ -43,7 +43,7 @@ use turbo_tasks::{
 
 use self::{operation::ExecuteContext, storage::Storage};
 use crate::{
-    backing_storage::BackingStorage,
+    backing_storage::{BackingStorage, ReadTransaction},
     data::{
         ActiveType, AggregationNumber, CachedDataItem, CachedDataItemIndex, CachedDataItemKey,
         CachedDataItemValue, CachedDataUpdate, CellRef, InProgressCellState, InProgressState,
@@ -175,6 +175,18 @@ impl TurboTasksBackendInner {
         ExecuteContext::new(self, turbo_tasks)
     }
 
+    /// # Safety
+    ///
+    /// `tx` must be a transaction from this TurboTasksBackendInner instance.
+    unsafe fn execute_context_with_tx<'a>(
+        &'a self,
+        tx: Option<ReadTransaction>,
+        turbo_tasks: &'a dyn TurboTasksBackendApi<TurboTasksBackend>,
+    ) -> ExecuteContext<'a> {
+        // Safety: `tx` is from `self`.
+        unsafe { ExecuteContext::new_with_tx(self, tx, turbo_tasks) }
+    }
+
     fn suspending_requested(&self) -> bool {
         (self.in_progress_operations.load(Ordering::Relaxed) & SNAPSHOT_REQUESTED_BIT) != 0
     }
@@ -253,17 +265,31 @@ impl<'a> Drop for OperationGuard<'a> {
 
 // Operations
 impl TurboTasksBackendInner {
+    /// # Safety
+    ///
+    /// `tx` must be a transaction from this TurboTasksBackendInner instance.
+    unsafe fn connect_child_with_tx(
+        &self,
+        tx: Option<ReadTransaction>,
+        parent_task: TaskId,
+        child_task: TaskId,
+        turbo_tasks: &dyn TurboTasksBackendApi<TurboTasksBackend>,
+    ) {
+        operation::ConnectChildOperation::run(parent_task, child_task, unsafe {
+            self.execute_context_with_tx(tx, turbo_tasks)
+        });
+    }
+
     fn connect_child(
         &self,
         parent_task: TaskId,
         child_task: TaskId,
         turbo_tasks: &dyn TurboTasksBackendApi<TurboTasksBackend>,
     ) {
-        operation::ConnectChildOperation::run(
-            parent_task,
-            child_task,
-            self.execute_context(turbo_tasks),
-        );
+        operation::ConnectChildOperation::run(parent_task, child_task, unsafe {
+            // Safety: Passing `None` is safe.
+            self.execute_context_with_tx(None, turbo_tasks)
+        });
     }
 
     fn try_read_task_output(
@@ -273,7 +299,7 @@ impl TurboTasksBackendInner {
         consistency: ReadConsistency,
         turbo_tasks: &dyn TurboTasksBackendApi<TurboTasksBackend>,
     ) -> Result<Result<RawVc, EventListener>> {
-        let ctx = self.execute_context(turbo_tasks);
+        let mut ctx = self.execute_context(turbo_tasks);
         let mut task = ctx.task(task_id, TaskDataCategory::All);
 
         if let Some(in_progress) = get!(task, InProgress) {
@@ -307,7 +333,7 @@ impl TurboTasksBackendInner {
                         base_aggregation_number: u32::MAX,
                         distance: None,
                     },
-                    &ctx,
+                    &mut ctx,
                 );
                 task = ctx.task(task_id, TaskDataCategory::All);
             }
@@ -397,7 +423,7 @@ impl TurboTasksBackendInner {
         cell: CellId,
         turbo_tasks: &dyn TurboTasksBackendApi<TurboTasksBackend>,
     ) -> Result<Result<TypedCellContent, EventListener>> {
-        let ctx = self.execute_context(turbo_tasks);
+        let mut ctx = self.execute_context(turbo_tasks);
         let mut task = ctx.task(task_id, TaskDataCategory::Data);
         if let Some(content) = get!(task, CellData { cell }) {
             let content = content.clone();
@@ -484,7 +510,10 @@ impl TurboTasksBackendInner {
         if let Some(task_type) = self.task_cache.lookup_reverse(&task_id) {
             return Some(task_type);
         }
-        if let Some(task_type) = self.backing_storage.reverse_lookup_task_cache(task_id) {
+        if let Some(task_type) = unsafe {
+            self.backing_storage
+                .reverse_lookup_task_cache(None, task_id)
+        } {
             let _ = self.task_cache.try_insert(task_type.clone(), task_id);
             return Some(task_type);
         }
@@ -581,9 +610,11 @@ impl TurboTasksBackendInner {
         // They can't be interrupted by a snapshot since the snapshotting job has not been scheduled
         // yet.
         let uncompleted_operations = self.backing_storage.uncompleted_operations();
-        let ctx = self.execute_context(turbo_tasks);
-        for op in uncompleted_operations {
-            op.execute(&ctx);
+        if !uncompleted_operations.is_empty() {
+            let mut ctx = self.execute_context(turbo_tasks);
+            for op in uncompleted_operations {
+                op.execute(&mut ctx);
+            }
         }
 
         // Schedule the snapshot job
@@ -610,9 +641,15 @@ impl TurboTasksBackendInner {
             return task_id;
         }
 
-        if let Some(task_id) = self.backing_storage.forward_lookup_task_cache(&task_type) {
+        let tx = self.backing_storage.start_read_transaction();
+        // Safety: `tx` is a valid transaction from `self.backend.backing_storage`.
+        if let Some(task_id) = unsafe {
+            self.backing_storage
+                .forward_lookup_task_cache(tx, &task_type)
+        } {
             let _ = self.task_cache.try_insert(Arc::new(task_type), task_id);
-            self.connect_child(parent_task, task_id, turbo_tasks);
+            // Safety: `tx` is a valid transaction from `self.backend.backing_storage`.
+            unsafe { self.connect_child_with_tx(tx, parent_task, task_id, turbo_tasks) };
             return task_id;
         }
 
@@ -626,14 +663,16 @@ impl TurboTasksBackendInner {
             self.persisted_task_cache_log
                 .lock(existing_task_id)
                 .push((task_type, existing_task_id));
-            self.connect_child(parent_task, existing_task_id, turbo_tasks);
+            // Safety: `tx` is a valid transaction from `self.backend.backing_storage`.
+            unsafe { self.connect_child_with_tx(tx, parent_task, existing_task_id, turbo_tasks) };
             return existing_task_id;
         }
         self.persisted_task_cache_log
             .lock(task_id)
             .push((task_type, task_id));
 
-        self.connect_child(parent_task, task_id, turbo_tasks);
+        // Safety: `tx` is a valid transaction from `self.backend.backing_storage`.
+        unsafe { self.connect_child_with_tx(tx, parent_task, task_id, turbo_tasks) };
 
         task_id
     }
@@ -653,6 +692,7 @@ impl TurboTasksBackendInner {
             );
         }
         if let Some(task_id) = self.task_cache.lookup_forward(&task_type) {
+            // Safety: `tx` is a valid transaction from `self.backend.backing_storage`.
             self.connect_child(parent_task, task_id, turbo_tasks);
             return task_id;
         }
@@ -664,10 +704,12 @@ impl TurboTasksBackendInner {
             unsafe {
                 self.transient_task_id_factory.reuse(task_id);
             }
+            // Safety: `tx` is a valid transaction from `self.backend.backing_storage`.
             self.connect_child(parent_task, existing_task_id, turbo_tasks);
             return existing_task_id;
         }
 
+        // Safety: `tx` is a valid transaction from `self.backend.backing_storage`.
         self.connect_child(parent_task, task_id, turbo_tasks);
 
         task_id
@@ -711,7 +753,7 @@ impl TurboTasksBackendInner {
         if task_id.is_transient() {
             return;
         }
-        let ctx = self.execute_context(turbo_tasks);
+        let mut ctx = self.execute_context(turbo_tasks);
         let mut task = ctx.task(task_id, TaskDataCategory::Data);
         task.invalidate_serialization();
     }
@@ -749,7 +791,7 @@ impl TurboTasksBackendInner {
             return None;
         };
         {
-            let ctx = self.execute_context(turbo_tasks);
+            let mut ctx = self.execute_context(turbo_tasks);
             let mut task = ctx.task(task_id, TaskDataCategory::Data);
             let in_progress = remove!(task, InProgress)?;
             let InProgressState::Scheduled { done_event } = in_progress else {
@@ -940,7 +982,7 @@ impl TurboTasksBackendInner {
         stateful: bool,
         turbo_tasks: &dyn TurboTasksBackendApi<TurboTasksBackend>,
     ) -> bool {
-        let ctx = self.execute_context(turbo_tasks);
+        let mut ctx = self.execute_context(turbo_tasks);
         let mut task = ctx.task(task_id, TaskDataCategory::All);
         let Some(CachedDataItemValue::InProgress { value: in_progress }) =
             task.remove(&CachedDataItemKey::InProgress {})
@@ -1174,7 +1216,7 @@ impl TurboTasksBackendInner {
         cell: CellId,
         turbo_tasks: &dyn TurboTasksBackendApi<TurboTasksBackend>,
     ) -> Result<TypedCellContent> {
-        let ctx = self.execute_context(turbo_tasks);
+        let mut ctx = self.execute_context(turbo_tasks);
         let task = ctx.task(task_id, TaskDataCategory::Data);
         if let Some(content) = get!(task, CellData { cell }) {
             Ok(CellContent(Some(content.1.clone())).into_typed(cell.type_id))
