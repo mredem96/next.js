@@ -223,7 +223,7 @@ impl<'a> TaskGuard<'a> {
             self.task.persistance_state_mut().add_persisting_item();
             self.backend
                 .persisted_storage_log(key.category())
-                .lock()
+                .lock(self.task_id)
                 .push(CachedDataUpdate {
                     key,
                     task: self.task_id,
@@ -254,7 +254,7 @@ impl<'a> TaskGuard<'a> {
             self.task.persistance_state_mut().add_persisting_item();
             self.backend
                 .persisted_storage_log(key.category())
-                .lock()
+                .lock(self.task_id)
                 .push(CachedDataUpdate {
                     key,
                     task: self.task_id,
@@ -271,7 +271,7 @@ impl<'a> TaskGuard<'a> {
                     self.task.persistance_state_mut().add_persisting_item();
                     self.backend
                         .persisted_storage_log(key.category())
-                        .lock()
+                        .lock(self.task_id)
                         .push(CachedDataUpdate {
                             key,
                             task: self.task_id,
@@ -315,7 +315,7 @@ impl<'a> TaskGuard<'a> {
                     add_persisting_item = true;
                     backend
                         .persisted_storage_log(key.category())
-                        .lock()
+                        .lock(*task_id)
                         .push(CachedDataUpdate {
                             key: key.clone(),
                             task: *task_id,
@@ -327,7 +327,7 @@ impl<'a> TaskGuard<'a> {
                     add_persisting_item = true;
                     backend
                         .persisted_storage_log(key.category())
-                        .lock()
+                        .lock(*task_id)
                         .push(CachedDataUpdate {
                             key: key.clone(),
                             task: *task_id,
@@ -352,7 +352,7 @@ impl<'a> TaskGuard<'a> {
                 self.task.persistance_state_mut().add_persisting_item();
                 self.backend
                     .persisted_storage_log(key.category())
-                    .lock()
+                    .lock(self.task_id)
                     .push(CachedDataUpdate {
                         key,
                         task: self.task_id,
@@ -411,7 +411,7 @@ impl<'a> TaskGuard<'a> {
             let mut guard = self
                 .backend
                 .persisted_storage_log(TaskDataCategory::Data)
-                .lock();
+                .lock(self.task_id);
             guard.extend(cell_data);
             self.task
                 .persistance_state_mut()
