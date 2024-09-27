@@ -592,7 +592,6 @@ impl TurboTasksBackendInner {
                 println!("Persising failed: {:#?}", err);
                 return None;
             }
-            println!("Snapshot saved");
         }
 
         for (task_id, count) in counts {
