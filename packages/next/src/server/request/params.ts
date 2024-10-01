@@ -511,11 +511,15 @@ function warnForEnumeration(
     const describedMissingProperties =
       describeListOfPropertyNames(missingProperties)
     console.error(
-      `${prefix}params are being enumerated incompletely with \`{...params}\`, \`Object.keys(params)\`, or similar. The following properties were not copied: ${describedMissingProperties}. \`params\` is now a Promise, however in the current version of Next.js direct access to the underlying params object is still supported to facilitate migration to the new type. param names that conflict with Promise properties cannot be accessed directly and must be accessed by first awaiting the \`params\` promise.`
+      `${prefix}params are being enumerated incompletely missing these properties: ${describedMissingProperties}. ` +
+        `\`params\` should be awaited before accessing its properties. ` +
+        `Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis`
     )
   } else {
     console.error(
-      `${prefix}params are being enumerated with \`{...params}\`, \`Object.keys(params)\`, or similar. \`params\` is now a Promise, however in the current version of Next.js direct access to the underlying params object is still supported to facilitate migration to the new type. You should update your code to await \`params\` before accessing its properties.`
+      `${prefix}params are being enumerated. ` +
+        `\`params\` should be awaited before accessing its properties. ` +
+        `Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis`
     )
   }
 }
