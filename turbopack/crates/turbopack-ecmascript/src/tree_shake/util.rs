@@ -487,5 +487,13 @@ impl Visit for ShouldSkip {
         n.visit_children_with(self);
     }
 
+    fn visit_expr(&mut self, n: &Expr) {
+        if self.skip {
+            return;
+        }
+
+        n.visit_children_with(self);
+    }
+
     noop_visit_type!();
 }
